@@ -1,0 +1,25 @@
+ESP32 Kraken Market Data Analysis Report
+==================================================
+
+Symbol: PI_XBTUSD
+Analysis Date: 2025-06-16 23:39:56
+Data File: market_data.csv
+
+Basic Statistics:
+- Total Updates: 590
+- Update Frequency: 24.24/sec
+- Price Range: $2440.00
+- Average Size: 3437.27
+- Total Volume: 2027987.00
+
+Order Flow Analysis:
+- Order Additions: 366
+- Order Removals: 224
+- Bid/Ask Flow: 239 / 127
+- Large Orders: 30
+
+Price Level Analysis:
+- Unique Price Levels: 189
+- Most Active Price: $108507.00
+- Most Active Count: 21
+
