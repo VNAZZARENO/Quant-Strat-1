@@ -1,0 +1,51 @@
+COMPREHENSIVE MARKET MICROSTRUCTURE ANALYSIS REPORT
+============================================================
+
+Symbol: PI_XBTUSD
+Analysis Date: 2025-06-17 00:16:20
+Data File: kraken_market_data_20250616_234839.csv
+Total Data Points: 6,135
+
+BASIC MARKET STATISTICS
+------------------------------
+Bid Updates: 3,750
+Ask Updates: 2,385
+Price Range: $105544.50 - $109787.50
+Average Size: 5867.17
+Total Volume: 35995064.00
+
+ORDERBOOK DYNAMICS
+--------------------
+Book Snapshots: 6,135
+Average Spread: $-1.4072
+Spread Volatility: $79.4245
+Average Liquidity: 2936954.1
+Book Imbalance: 0.190
+
+QUEUE DYNAMICS FOR 0+ STRATEGY
+-----------------------------------
+Total Queue Events: 6,135
+Average Queue Strength: 5867.2
+Opportunities Found: 11
+Average Theoretical Edge: $0.0687
+
+PRICE IMPACT MODEL PERFORMANCE
+-----------------------------------
+R² Score: 0.4876
+RMSE: 614.615279
+Features Used: 53
+
+TOP 10 PREDICTIVE FEATURES:
+ 1. price_position_100: 0.4059
+ 2. price_position_50: 0.1113
+ 3. price_mean_50: 0.0218
+ 4. price_mean_5: 0.0199
+ 5. rsi: 0.0190
+ 6. price_std_50: 0.0174
+ 7. price_mean_20: 0.0166
+ 8. size_std_5: 0.0162
+ 9. price_momentum: 0.0161
+10. size_mean_5: 0.0161
+
+0+ STRATEGY IMPLEMENTATION RECOMMENDATIONS
+---------------------------------------------

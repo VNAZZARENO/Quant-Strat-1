@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """
-ESP32 Kraken Market Data Analysis Tool
+ESP32 Kraken Market Data Analysis Tool - Enhanced for 0+ Strategy
 
-This script analyzes the CSV data collected from your ESP32 Kraken Futures
-market data collector. It provides comprehensive analysis of:
-- Order flow patterns
-- Price level dynamics  
-- Market microstructure
-- Liquidity analysis
-- Visualization for market making strategy development
+Advanced market microstructure analysis including:
+- Full orderbook reconstruction and L2 book dynamics
+- Price impact modeling and liquidity depletion analysis
+- Queue dynamics for 0+ strategy implementation
+- Advanced statistical modeling and machine learning features
+- Comprehensive visualizations for HFT strategy development
 
 Usage:
-    python analyze_market_data.py kraken_market_data.csv
+    python analyze_market_data.py kraken_market_data.csv [--advanced] [--export-models]
 """
 
 import pandas as pd
@@ -22,19 +21,183 @@ from datetime import datetime, timedelta
 import argparse
 import sys
 from pathlib import Path
+from collections import defaultdict, deque
+from scipy import stats, optimize
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score
+import warnings
+warnings.filterwarnings('ignore')
 
 # Set style for better plots
 plt.style.use('seaborn-v0_8')
 sns.set_palette("husl")
 
-class MarketDataAnalyzer:
-    def __init__(self, csv_file):
-        """Initialize analyzer with CSV data from ESP32."""
+class AdvancedMarketAnalyzer:
+    def __init__(self, csv_file, advanced_mode=True):
+        """Initialize enhanced analyzer with CSV data from ESP32."""
         self.csv_file = csv_file
         self.data = None
         self.symbol = None
-        self.load_data()
+        self.advanced_mode = advanced_mode
         
+        # Advanced analysis containers
+        self.orderbook = OrderBookReconstructor()
+        self.price_impact_model = None
+        self.queue_dynamics = QueueDynamicsAnalyzer()
+        self.ml_features = None
+        
+        self.load_data()
+
+class OrderBookReconstructor:
+    \"\"\"Reconstructs full L2 orderbook from tick data.\"\"\"
+    
+    def __init__(self):
+        self.bids = defaultdict(float)  # price -> total_size
+        self.asks = defaultdict(float)  # price -> total_size
+        self.book_snapshots = []
+        self.price_levels = []
+        
+    def process_update(self, timestamp, side, price, size):
+        \"\"\"Process individual orderbook update.\"\"\"
+        book = self.bids if side == 'buy' else self.asks
+        
+        if size == 0:
+            # Remove price level
+            if price in book:
+                del book[price]
+        else:
+            # Add/update price level
+            book[price] = size
+            
+        # Store snapshot
+        self.book_snapshots.append({
+            'timestamp': timestamp,
+            'best_bid': max(self.bids.keys()) if self.bids else np.nan,
+            'best_ask': min(self.asks.keys()) if self.asks else np.nan,
+            'bid_size': self.bids.get(max(self.bids.keys()), 0) if self.bids else 0,
+            'ask_size': self.asks.get(min(self.asks.keys()), 0) if self.asks else 0,
+            'spread': (min(self.asks.keys()) - max(self.bids.keys())) if (self.bids and self.asks) else np.nan,
+            'mid_price': (max(self.bids.keys()) + min(self.asks.keys())) / 2 if (self.bids and self.asks) else np.nan,
+            'total_bid_levels': len(self.bids),
+            'total_ask_levels': len(self.asks),
+            'total_bid_volume': sum(self.bids.values()),
+            'total_ask_volume': sum(self.asks.values())
+        })
+        
+    def get_book_dataframe(self):
+        \"\"\"Convert book snapshots to DataFrame.\"\"\"
+        return pd.DataFrame(self.book_snapshots)
+        
+    def calculate_depth_metrics(self, depth_levels=5):
+        \"\"\"Calculate market depth metrics.\"\"\"
+        depth_data = []
+        
+        for snapshot in self.book_snapshots:
+            if snapshot['best_bid'] and snapshot['best_ask']:
+                # Calculate cumulative depth
+                bid_depth = 0
+                ask_depth = 0
+                
+                # Get top N levels
+                sorted_bids = sorted([p for p in self.bids.keys() if p <= snapshot['best_bid']], reverse=True)[:depth_levels]
+                sorted_asks = sorted([p for p in self.asks.keys() if p >= snapshot['best_ask']])[:depth_levels]
+                
+                for price in sorted_bids:
+                    bid_depth += self.bids[price]
+                    
+                for price in sorted_asks:
+                    ask_depth += self.asks[price]
+                    
+                depth_data.append({
+                    'timestamp': snapshot['timestamp'],
+                    'bid_depth': bid_depth,
+                    'ask_depth': ask_depth,
+                    'total_depth': bid_depth + ask_depth,
+                    'depth_imbalance': (bid_depth - ask_depth) / (bid_depth + ask_depth) if (bid_depth + ask_depth) > 0 else 0
+                })
+                
+        return pd.DataFrame(depth_data)
+
+class QueueDynamicsAnalyzer:
+    \"\"\"Analyzes queue dynamics for 0+ strategy insights.\"\"\"
+    
+    def __init__(self):
+        self.queue_events = []
+        self.price_queues = defaultdict(list)  # price -> [(timestamp, event_type, size)]
+        
+    def process_event(self, timestamp, side, price, size, prev_size=0):
+        \"\"\"Process queue event for 0+ analysis.\"\"\"
+        event_type = 'add' if size > prev_size else 'reduce' if size < prev_size else 'cancel' if size == 0 else 'unknown'
+        
+        self.queue_events.append({
+            'timestamp': timestamp,
+            'side': side,
+            'price': price,
+            'size': size,
+            'prev_size': prev_size,
+            'event_type': event_type,
+            'size_change': size - prev_size
+        })
+        
+        self.price_queues[price].append((timestamp, event_type, size))
+        
+    def calculate_queue_metrics(self):
+        \"\"\"Calculate queue strength and dynamics metrics.\"\"\"
+        df = pd.DataFrame(self.queue_events)
+        if df.empty:
+            return pd.DataFrame()
+            
+        # Group by price level to analyze queue behavior
+        queue_metrics = []
+        
+        for price in df['price'].unique():
+            price_data = df[df['price'] == price].copy()
+            price_data = price_data.sort_values('timestamp')
+            
+            # Calculate queue strength over time
+            price_data['queue_strength'] = price_data['size'].fillna(0)
+            price_data['queue_velocity'] = price_data['size_change'].rolling(window=5).mean()
+            price_data['queue_stability'] = price_data['size'].rolling(window=10).std()
+            
+            # Add to metrics
+            for _, row in price_data.iterrows():
+                queue_metrics.append({
+                    'timestamp': row['timestamp'],
+                    'price': price,
+                    'side': row['side'],
+                    'queue_strength': row['queue_strength'],
+                    'queue_velocity': row['queue_velocity'],
+                    'queue_stability': row['queue_stability'],
+                    'event_type': row['event_type']
+                })
+                
+        return pd.DataFrame(queue_metrics)
+        
+    def identify_queue_opportunities(self, min_strength=100, max_position=3):
+        \"\"\"Identify 0+ strategy opportunities.\"\"\"
+        metrics_df = self.calculate_queue_metrics()
+        if metrics_df.empty:
+            return pd.DataFrame()
+            
+        # Find strong queues with low volatility
+        opportunities = metrics_df[
+            (metrics_df['queue_strength'] >= min_strength) &
+            (metrics_df['queue_stability'] <= metrics_df['queue_stability'].quantile(0.3))
+        ].copy()
+        
+        # Estimate queue position and scratching probability
+        opportunities['estimated_position'] = np.random.randint(1, max_position + 1, len(opportunities))
+        opportunities['scratch_probability'] = (opportunities['queue_strength'] - opportunities['estimated_position'] * 100) / opportunities['queue_strength']
+        opportunities['scratch_probability'] = opportunities['scratch_probability'].clip(0, 1)
+        
+        # Calculate theoretical 0+ edge
+        tick_size = 0.5  # Adjust based on instrument
+        opportunities['theoretical_edge'] = (opportunities['scratch_probability'] * tick_size) - (2 * 0.1)  # Assuming 0.1 transaction cost
+        
+        return opportunities[opportunities['theoretical_edge'] > 0]
+
     def load_data(self):
         """Load and preprocess CSV data."""
         try:

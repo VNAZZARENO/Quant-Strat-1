@@ -16,6 +16,8 @@ unsigned long dataCollectionStart = 0;
 bool dataCollectionActive = false;
 bool collectionComplete = false;
 int messageCount = 0;
+unsigned long lastFileSizeCheck = 0;
+size_t currentFileSize = 0;
 
 // Authentication state
 bool isAuthenticated = false;
@@ -33,6 +35,8 @@ void writeCSVHeader();
 void writeDataToCSV(const String& timestamp, const String& symbol, const String& side, 
                     float price, float size);
 void stopDataCollection();
+bool checkFileSize();
+void displayCollectionProgress();
 
 // Authentication functions
 String base64Encode(const uint8_t* data, size_t length);
@@ -78,7 +82,10 @@ void setup() {
     dataCollectionStart = millis();
     dataCollectionActive = true;
     
-    Serial.println("Setup complete! Starting 10-minute data collection...\n");
+    Serial.println("Setup complete! Starting 90-minute data collection...\n");
+    Serial.printf("🎯 Target duration: %d minutes\n", DATA_COLLECTION_DURATION_MS / 60000);
+    Serial.printf("💾 File size limit: %.1f MB\n", MAX_FILE_SIZE_BYTES / 1000000.0);
+    Serial.printf("📊 Expected data points: ~%d\n", (DATA_COLLECTION_DURATION_MS / 60000) * 60);
 }
 
 void loop() {
@@ -99,9 +106,22 @@ void loop() {
         lastConnectionCheck = millis();
     }
     
-    // Check if collection time has passed
-    if (dataCollectionActive && (millis() - dataCollectionStart) >= DATA_COLLECTION_DURATION_MS) {
-        stopDataCollection();
+    // Check if collection time has passed or file size limit reached
+    if (dataCollectionActive) {
+        if ((millis() - dataCollectionStart) >= DATA_COLLECTION_DURATION_MS) {
+            Serial.println("\n⏰ Time limit reached - stopping collection");
+            stopDataCollection();
+        } else if (!checkFileSize()) {
+            Serial.println("\n💾 File size limit reached - stopping collection");
+            stopDataCollection();
+        }
+    }
+    
+    // Display progress every 30 seconds
+    static unsigned long lastProgressUpdate = 0;
+    if (dataCollectionActive && (millis() - lastProgressUpdate) > 30000) {
+        displayCollectionProgress();
+        lastProgressUpdate = millis();
     }
     
     // Small delay to prevent CPU hogging
@@ -343,7 +363,9 @@ void stopDataCollection() {
     webSocket.disconnect();
     
     Serial.println("\n=== Data Collection Complete ===");
-    Serial.printf("Duration: %d seconds\n", DATA_COLLECTION_DURATION_MS / 1000);
+    unsigned long actualDuration = (millis() - dataCollectionStart) / 1000;
+    Serial.printf("Target duration: %d minutes\n", DATA_COLLECTION_DURATION_MS / 60000);
+    Serial.printf("Actual duration: %lu minutes %lu seconds\n", actualDuration / 60, actualDuration % 60);
     Serial.printf("Messages received: %d\n", messageCount);
     
     // Show file size and basic stats
@@ -534,7 +556,9 @@ void handleRoot(AsyncWebServerRequest *request) {
     if (collectionComplete) {
         html += "<div class='status complete'>✅ Data collection complete!</div>";
         html += "<p><strong>Messages collected:</strong> " + String(messageCount) + "</p>";
-        html += "<p><strong>Duration:</strong> " + String(DATA_COLLECTION_DURATION_MS / 1000) + " seconds</p>";
+        unsigned long actualDuration = (millis() - dataCollectionStart) / 1000;
+        html += "<p><strong>Target Duration:</strong> " + String(DATA_COLLECTION_DURATION_MS / 60000) + " minutes</p>";
+        html += "<p><strong>Actual Duration:</strong> " + String(actualDuration / 60) + "m " + String(actualDuration % 60) + "s</p>";
         
         if (SPIFFS.exists(CSV_FILENAME)) {
             File file = SPIFFS.open(CSV_FILENAME, FILE_READ);
@@ -550,9 +574,22 @@ void handleRoot(AsyncWebServerRequest *request) {
         html += "<div class='status active'>🔄 Data collection in progress...</div>";
         unsigned long elapsed = (millis() - dataCollectionStart) / 1000;
         unsigned long remaining = (DATA_COLLECTION_DURATION_MS / 1000) - elapsed;
-        html += "<p><strong>Elapsed time:</strong> " + String(elapsed) + " seconds</p>";
-        html += "<p><strong>Remaining time:</strong> " + String(remaining) + " seconds</p>";
+        float progressPercent = (float)(millis() - dataCollectionStart) / DATA_COLLECTION_DURATION_MS * 100.0;
+        
+        html += "<p><strong>Progress:</strong> " + String(progressPercent, 1) + "%</p>";
+        html += "<p><strong>Elapsed time:</strong> " + String(elapsed / 60) + "m " + String(elapsed % 60) + "s</p>";
+        html += "<p><strong>Remaining time:</strong> " + String(remaining / 60) + "m " + String(remaining % 60) + "s</p>";
         html += "<p><strong>Messages collected:</strong> " + String(messageCount) + "</p>";
+        
+        // Show current file size
+        if (SPIFFS.exists(CSV_FILENAME)) {
+            File file = SPIFFS.open(CSV_FILENAME, FILE_READ);
+            if (file) {
+                float fileSizeKB = file.size() / 1024.0;
+                html += "<p><strong>Current file size:</strong> " + String(fileSizeKB, 1) + " KB</p>";
+                file.close();
+            }
+        }
         html += "<p>Please wait for collection to complete...</p>";
         html += "<script>setTimeout(function(){location.reload();}, 5000);</script>";
     } else {
@@ -594,4 +631,68 @@ void handleFileList(AsyncWebServerRequest *request) {
     html += "</body></html>";
     
     request->send(200, "text/html", html);
+}
+
+// File size monitoring functions
+bool checkFileSize() {
+    // Only check file size every 10 seconds to avoid performance impact
+    if (millis() - lastFileSizeCheck < 10000) {
+        return true; // Assume OK if we checked recently
+    }
+    
+    lastFileSizeCheck = millis();
+    
+    if (SPIFFS.exists(CSV_FILENAME)) {
+        File file = SPIFFS.open(CSV_FILENAME, FILE_READ);
+        if (file) {
+            currentFileSize = file.size();
+            file.close();
+            
+            if (currentFileSize >= MAX_FILE_SIZE_BYTES) {
+                Serial.printf("\n⚠️  File size limit reached: %d bytes (limit: %d bytes)\n", 
+                             currentFileSize, MAX_FILE_SIZE_BYTES);
+                return false; // Size limit exceeded
+            }
+        }
+    }
+    
+    return true; // Size OK
+}
+
+void displayCollectionProgress() {
+    unsigned long elapsedMs = millis() - dataCollectionStart;
+    unsigned long elapsedSeconds = elapsedMs / 1000;
+    unsigned long remainingMs = DATA_COLLECTION_DURATION_MS - elapsedMs;
+    unsigned long remainingSeconds = remainingMs / 1000;
+    
+    // Calculate progress percentage
+    float progressPercent = (float)elapsedMs / DATA_COLLECTION_DURATION_MS * 100.0;
+    
+    // Data rate calculations
+    float avgUpdatesPerSecond = (float)messageCount / (elapsedSeconds + 1);
+    float currentDataRateKB = (float)currentFileSize / 1024.0;
+    float projectedSizeKB = currentDataRateKB * (DATA_COLLECTION_DURATION_MS / elapsedMs);
+    
+    Serial.println("\n📊 === COLLECTION PROGRESS ===");
+    Serial.printf("⏰ Elapsed: %lum %lus (%.1f%%)\n", 
+                 elapsedSeconds / 60, elapsedSeconds % 60, progressPercent);
+    Serial.printf("⏳ Remaining: %lum %lus\n", 
+                 remainingSeconds / 60, remainingSeconds % 60);
+    Serial.printf("📈 Updates: %d (%.1f/sec)\n", messageCount, avgUpdatesPerSecond);
+    Serial.printf("💾 File size: %.1f KB / %.1f KB limit\n", 
+                 currentDataRateKB, MAX_FILE_SIZE_BYTES / 1024.0);
+    Serial.printf("🎯 Projected final size: %.1f KB\n", projectedSizeKB);
+    Serial.printf("🔗 WiFi signal: %d dBm\n", WiFi.RSSI());
+    Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
+    
+    // Warning if approaching limits
+    if (projectedSizeKB > (MAX_FILE_SIZE_BYTES / 1024.0)) {
+        Serial.println("⚠️  WARNING: Projected size exceeds limit!");
+    }
+    
+    if (WiFi.RSSI() < -70) {
+        Serial.println("⚠️  WARNING: Weak WiFi signal may cause disconnections!");
+    }
+    
+    Serial.println("============================\n");
 }

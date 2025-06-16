@@ -34,7 +34,8 @@
 #endif
 
 // Data Collection Configuration
-#define DATA_COLLECTION_DURATION_MS 600000  // 10 minutes (600 seconds)
+#define DATA_COLLECTION_DURATION_MS 5400000  // 90 minutes (1.5 hours)
+#define MAX_FILE_SIZE_BYTES 2500000  // 2.5MB safety limit (leave 400KB margin)
 #define CSV_FILENAME "/market_data.csv"
 #define ENABLE_HTTP_SERVER 1  // Enable HTTP server for file download
 
